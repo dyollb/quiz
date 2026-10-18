@@ -65,7 +65,7 @@ Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,Bern is the federal city
 2 + 2?,3,4,5,6,2,2 + 2 equals 4.
 ```
 
-`correct` is the 1-based answer index; use `2,4` for multiple correct answers. Optional columns: `time_limit` (seconds), `title`.
+`correct` is the 1-based answer index; use `2,4` for multiple correct answers. The `explanation` is shown after every answer (right or wrong) so pupils learn from mistakes too. Optional columns: `time_limit` (seconds), `title`. Kahoot-export CSVs have no explanation column — only the simple format carries explanations.
 
 ### CSV — Kahoot export
 
@@ -106,6 +106,22 @@ Import a `.quiz` via the in-app **Import** page (file picker or drag-and-drop, w
 }
 ```
 
+## Generating quiz CSVs with ChatGPT / Codex
+
+This repo ships an agent skill at `.agents/skills/quiz-csv-creator/` that turns any teaching text (chapter, PDF, notes) into an import-ready quiz CSV in the simple format above — including the `explanation` shown after each answer. The question-design rules follow learning-science research (retrieval practice, plausible misconception-based distractors, ~80% difficulty, elaborated feedback); the skill enforces its own output contract with a bundled validator.
+
+- **ChatGPT (desktop app):** enable the skill under *Skills*, then pick it with `@quiz-csv-creator` in a chat and attach or paste your source text.
+- **Codex (CLI / IDE / desktop):** skills in this repo's `.agents/skills/` are discovered automatically — mention it with `$quiz-csv-creator` or just ask “make a quiz from <file>”.
+- **Other projects:** copy or symlink the folder into `~/.agents/skills/quiz-csv-creator/`.
+
+It follows the open [Agent Skills](https://agentskills.io/specification) format. You can check any generated file yourself (stdlib Python, no dependencies):
+
+```bash
+python3 .agents/skills/quiz-csv-creator/scripts/validate_quiz_csv.py MyQuiz.csv --strict
+```
+
+Import the result on the app's **Import** page. A worked example with explanations: `example/Simple_demo_quiz.csv`.
+
 ## Scoring
 
 | Mode | Points |
@@ -136,5 +152,6 @@ src/pages/        Home, Play (start/timer toggle), Results, History, Import, Sha
 src/dev/          dev-only quiz builder
 src/sw.ts         service worker: offline cache + share-target POST handling
 scripts/          icon generation
-example/          sample Kahoot-export CSV
+example/          sample CSVs (Kahoot export + simple format with explanations)
+.agents/skills/   quiz-csv-creator — ChatGPT/Codex skill that generates quiz CSVs
 ```
