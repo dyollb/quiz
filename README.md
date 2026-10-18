@@ -35,7 +35,7 @@ Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,Bern is the federal city
 2 + 2?,3,4,5,6,2,2 + 2 equals 4.
 ```
 
-Kahoot-export CSVs are auto-detected, and `.quiz` packages (zip with `quiz.json` + images) round-trip photos and attribution. Full details: [docs/quiz-format.md](docs/quiz-format.md).
+One correct answer per question — the app is single-choice. Kahoot-export CSVs are auto-detected, and `.quiz` packages (zip with `quiz.json` + images) round-trip photos and attribution. Full details: [docs/quiz-format.md](docs/quiz-format.md).
 
 ### Generate quizzes with ChatGPT / Codex
 

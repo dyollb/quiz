@@ -13,7 +13,7 @@ Turn learning material into a quiz that teaches, not just tests. Retrieval pract
 - Header line exactly: `question,answer1,answer2,answer3,answer4,correct,explanation`
 - `question` — the stem; aim under 120 characters so it fits on a phone.
 - `answer1`..`answer4` — all four filled, non-empty, mutually exclusive options.
-- `correct` — a single 1-based index (1–4). Exactly one correct answer per question.
+- `correct` — a single 1-based index (1–4). Exactly one correct answer per question: the app is single-choice, a pupil taps one answer, so never mark several options correct (the format technically allows `2,4`, but the app can then never score it correct).
 - `explanation` — required for every question; shown after answering, correct or wrong.
 - Optional extra columns at the end: `time_limit` (seconds, 5–120) and `title` (quiz title, put it on the first data row only).
 - Filename = short quiz title, e.g. `Erdentstehung.csv`.
@@ -32,6 +32,11 @@ Turn learning material into a quiz that teaches, not just tests. Retrieval pract
 ## Question rules
 
 - Test understanding, not keyword matching: paraphrase the source, so the answer cannot be found by searching for an unusual word from the stem. Prefer stems that apply, compare, explain causes, or use a mini-scenario ("Warum…", "Was wäre wenn…", "Woran erkennt man…").
+- Every question must stand on its own: a pupil who has answered nothing else must still be able to solve it, and knowing one question's answer must not give away another's. Each testable fact from the source may be questioned only once. Never reuse the same set of options in two questions. Vary the stem template — do not ask "Zu welcher Gattung gehört X?" for several items.
+  Concrete patterns to avoid:
+  - ❌ "Zu welcher Instrumentenart gehört der Büchel? (…Saiten-/Schlag-/Blasinstrument)", "Zu welcher Instrumentenart gehört die Zither?", "Zu welcher Instrumentenfamilie gehört das Schwyzerörgeli?"… — one category fact per instrument, always against the same four categories: after the first item, the rest fall out by elimination.
+  - ❌ Asking "Was verbindet Alphorn und Büchel?" (answer: both are Blasinstrumente) after a question already established the Büchel is a Blasinstrument.
+  - ✅ Instead ask about facts that cannot be derived from other items: how the sound is produced, what a body part is for, what changes the volume — and make sure comparison items do not repeat a fact another question already states.
 - Exactly one option is correct, unambiguously: a pupil who understood the text must see it; a pupil who did not must not.
 - All four options must be plausible. Build distractors from real misconceptions (e.g. "im Winter ist die Erde weiter von der Sonne entfernt") or right-sounding half-truths. Never joke or filler options — each must be *clearly* wrong only after understanding.
 - Keep options parallel: same grammar, similar length (max/min ratio under 3), same register, all grammatically consistent with the stem. If one option is longer or more precise than the rest, it leaks the key — rewrite.
@@ -42,10 +47,11 @@ Turn learning material into a quiz that teaches, not just tests. Retrieval pract
 
 ## Explanation rules
 
-- 1–3 sentences, required for EVERY question (including ones most pupils get right).
+- Required for EVERY question (including ones most pupils get right): **2–3 full sentences** — one bare sentence is too thin, and the source reference does not count as a sentence. The reference exists so you verify the answer against the source; it must never replace the learning content.
 - Say why the correct option is right. If a distractor is a popular misconception, spend one clause on why it is wrong — that is the highest-value content for pupils who picked it.
 - Add a bit beyond the question (a number, a cause, a consequence), so even pupils who knew the answer learn something.
 - End with a short reference into the source in parentheses, e.g. `(S. 3, Abs. 2)`, `(Fig. 2)`, `(p. 12)`. Only cite places that actually support the answer — verify against the source, never invent page numbers.
+- Example shape (content, not style): "Der Büchel ist kleiner und mehrfach gebogen, während das Alphorn mehrere Meter lang ist. Wegen seiner kompakten Form konnte ihn ein Hirte leichter tragen. Deshalb klingt er heller als das tiefe Alphorn. (S. 3)"
 - Never leave the field empty or write "see text" placeholders.
 
 ## Correct-answer order (script-enforced — do not skip)

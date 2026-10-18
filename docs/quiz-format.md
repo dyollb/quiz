@@ -10,7 +10,7 @@ Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,Bern is the federal city
 2 + 2?,3,4,5,6,2,2 + 2 equals 4.
 ```
 
-- `correct` is the 1-based answer index; use `2,4` for multiple correct answers.
+- `correct` is the 1-based answer index. The format accepts several correct answers (`2,4`), but the app is **single-choice** — a pupil taps exactly one answer, so a question with multiple correct options can never be scored there; use one correct answer per question.
 - `explanation` is shown after every answer (right or wrong) so pupils learn from mistakes too.
 - Optional extra columns: `time_limit` (seconds per question) and `title` (quiz title, put it on the first data row only).
 - Kahoot-export CSVs have no explanation column — only the simple format carries explanations.

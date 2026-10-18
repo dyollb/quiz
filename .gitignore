@@ -4,3 +4,4 @@ dev-dist
 certs
 *.local
 .DS_Store
+__pycache__/

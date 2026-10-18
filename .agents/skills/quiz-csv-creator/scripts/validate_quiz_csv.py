@@ -3,8 +3,10 @@
 
 Checks the file against the contract in ../SKILL.md: exact header, four
 non-empty answers, a single in-range 1-based correct index, duplicate and
-banned option patterns, explanation coverage, and correct-answer position
-randomness (no position in more than half of the questions, never 3+ in a row).
+banned option patterns, explanation coverage (2-3 sentences), correct-answer
+position randomness (no position in more than half of the questions, never 3+
+in a row), and question independence (repeated stem templates, option sets
+shared between questions, the same correct fact tested repeatedly).
 
 Usage:
     python3 validate_quiz_csv.py QUIZ.csv [--strict]
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import re
 import sys
 from collections import Counter
@@ -38,12 +41,18 @@ REFERENCE = re.compile(r"\([^()]*\d[^()]*\)|¶")
 STOPWORDS = {
     "welche", "welcher", "welches", "welchem", "welchen", "was", "wie", "warum", "weshalb",
     "womit", "wodurch", "worauf", "woran", "worin", "wann", "wer", "wem", "wen", "dessen",
-    "deren", "denen", "deren", "diese", "dieser", "dieses", "this", "that", "which", "what",
+    "deren", "diese", "dieser", "dieses", "this", "that", "which", "what",
     "where", "when", "why", "how", "does", "into", "about", "under", "über", "unter",
     "gegen", "zwischen", "innerhalb", "äquivalent", "bezüglich", "sogenannte", "eigentlich",
     "eigentliche", "eigentlichen", "folgende", "folgendes", "richtig", "falsch", "wahr",
     "stimmt", "bedeutet", "genau", "ebenso", "sondern", "manche", "einige", "bereits",
     "weiter", "später", "früher", "wieder", "immer", "meist", "oft", "immerhin", "ebens",
+    "gilt", "entstanden", "verändert", "bedeutet", "unterscheiden", "verbindet",
+}
+ARTICLES = {
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer",
+    "eines", "einem", "ein", "a", "an", "the", "ihr", "ihre", "ihren", "sein", "seine",
+    "seinem", "seiner", "unser", "unsere", "ihr", "ihre",
 }
 WORD = re.compile(r"[\wÄÖÜäöüßß-]+")
 
@@ -61,9 +70,25 @@ def words_6plus(text: str) -> set[str]:
 
 
 def sentence_count(text: str) -> int:
-    # Drop the source reference "(S. 4, Abs. 1)" first - its dots are not sentences.
+    # Drop the source reference "(S. 4, Abs. 1)" - its dots are not sentences.
+    # Count terminators only when followed by whitespace + capital/digit, so
+    # abbreviations ("ca.", "S.") and decimals ("23,5°.") are not over-counted.
     text = re.sub(r"\([^()]*\)", "", text)
-    return len([p for p in re.split(r"[.!?…]+", text) if p.strip()])
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return 0
+    ends = len(re.findall(r"[.!?…](?![:;])(?=\s+[A-ZÄÖÜ0-9]|$)", text))
+    return max(1, ends)
+
+
+def stem_template(prompt: str) -> str:
+    """Normalise a stem so 'Zu welcher Art gehort der Buchel?' and '... die Zither?'
+    collapse to the same template: keep function words, mask content words/articles."""
+    words = re.sub(r"[^\wäöüÄÖÜß]+", " ", prompt.lower()).split()
+    return " ".join(
+        w if (w in STOPWORDS or (len(w) <= 3 and w not in ARTICLES)) else "_"
+        for w in words
+    )
 
 
 def main() -> int:
@@ -163,10 +188,13 @@ def main() -> int:
         if not explanation:
             e(f"row {line_no}: explanation is missing - required for every question")
         else:
-            if len(explanation) > 240:
-                w(f"row {line_no}: explanation is {len(explanation)} chars - keep it to 1-3 short sentences")
-            if sentence_count(explanation) > 3:
+            sc = sentence_count(explanation)
+            if sc < 2:
+                e(f"row {line_no}: explanation is {sc} sentence - use 2-3 sentences (the '(S. n)' reference does not count)")
+            elif sc > 3:
                 w(f"row {line_no}: explanation has more than 3 sentences")
+            if len(explanation) > 260:
+                w(f"row {line_no}: explanation is {len(explanation)} chars - keep it to 2-3 short sentences")
             if not REFERENCE.search(explanation):
                 w(f"row {line_no}: explanation has no source reference like '(S. 3, Abs. 2)' or '(Fig. 2)'")
 
@@ -214,6 +242,42 @@ def main() -> int:
         lens = [len(a) for a in filled]
         if min(lens) > 0 and max(lens) / min(lens) >= 3:
             w(f"row {line_no}: answer lengths differ a lot ({min(lens)} vs {max(lens)} chars) - the longest option often clues the key")
+
+    # Question independence: correlated items let pupils answer by elimination.
+    templates: dict[str, list[int]] = {}
+    for line_no, prompt, *_ in questions:
+        templates.setdefault(stem_template(prompt), []).append(line_no)
+    for tpl, lines in templates.items():
+        if len(lines) >= 3:
+            e(f"rows {', '.join(map(str, lines))}: same stem template used {len(lines)}x ('{tpl}') - such items are correlated and give answers away by elimination")
+
+    opt_lines: dict[frozenset[str], list[int]] = {}
+    for line_no, _, filled, _, _ in questions:
+        opt_lines.setdefault(frozenset(lowered(a) for a in filled), []).append(line_no)
+    for lines in opt_lines.values():
+        if len(lines) >= 2:
+            e(f"rows {', '.join(map(str, lines))}: identical option set - answering one solves the other(s)")
+
+    pair_shared: dict[tuple[int, int], int] = Counter()
+    for (l1, _, f1, _, _), (l2, _, f2, _, _) in itertools.combinations(questions, 2):
+        shared = sum(1 for a in f2 if lowered(a) in {lowered(x) for x in f1})
+        if shared:
+            pair_shared[(l1, l2)] = shared
+    for (l1, l2), shared in sorted(pair_shared.items()):
+        if shared >= 3:
+            e(f"rows {l1} & {l2}: share {shared} of their options - items are correlated, rewrite distractors")
+        elif shared == 2:
+            w(f"rows {l1} & {l2}: share 2 options - check that neither gives the other away")
+
+    key_lines: dict[str, list[int]] = {}
+    for line_no, _, filled, key, _ in questions:
+        if key and key <= len(filled):
+            key_lines.setdefault(lowered(filled[key - 1]), []).append(line_no)
+    for text, lines in key_lines.items():
+        if len(lines) >= 3:
+            e(f"'{text}' is the correct answer in {len(lines)} questions ({', '.join(map(str, lines))}) - one fact per question")
+        elif len(lines) == 2:
+            w(f"'{text}' is the correct answer in both rows {lines[0]} and {lines[1]} - make the second item test something else")
 
     report(args.file, n, [counts.get(p, 0) for p in (1, 2, 3, 4)], errors, warnings, args.strict)
     if errors or (args.strict and warnings):
