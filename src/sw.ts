@@ -16,6 +16,11 @@ declare let self: ServiceWorkerGlobalScope & {
 skipWaiting()
 clientsClaim()
 
+// App root from Vite's base: "/" in dev, "/<repo>/" on GitHub Pages.
+const BASE = import.meta.env.BASE_URL
+const SHARE_TARGET_PATH = `${BASE}share-target`
+const SHARE_TARGET_RE = new RegExp(`^${SHARE_TARGET_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
+
 // Offline app shell (hashed assets precached at build time).
 precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
@@ -23,7 +28,7 @@ cleanupOutdatedCaches()
 // SPA navigation fallback to the precached index.html.
 registerRoute(
   new NavigationRoute(createHandlerBoundToURL('index.html'), {
-    denylist: [/^\/share-target/], // let our fetch handler deal with these
+    denylist: [SHARE_TARGET_RE], // let our fetch handler deal with these
   }),
 )
 
@@ -35,7 +40,7 @@ registerRoute(
  */
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
-  if (url.pathname !== '/share-target' || event.request.method !== 'POST') return
+  if (url.pathname !== SHARE_TARGET_PATH || event.request.method !== 'POST') return
 
   event.respondWith(handleShare(event.request))
 })
@@ -54,7 +59,7 @@ async function handleShare(request: Request): Promise<Response> {
     if (!keys.length) {
       return new Response('No file received', { status: 400 })
     }
-    const target = `/share-target?file=${encodeURIComponent(keys[0])}`
+    const target = `${SHARE_TARGET_PATH}?file=${encodeURIComponent(keys[0])}`
     // Focus/openWindow can be blocked outside a user gesture — never fail the
     // share for that; the file is already staged and picked up by the app.
     const existing = await self.clients.matchAll({ type: 'window' })
