@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import ReviewList from '../components/ReviewList'
 import { addHistory, clearGameState, getGameState, getMediaUrl, getQuiz, saveGameState, type GameState } from '../lib/db'
 import { BASE_POINTS, scoreAnswer } from '../lib/scoring'
-import { quizMaxScore, type Quiz } from '../lib/schema'
+import { quizMaxScore, type Quiz, type RunResult } from '../lib/schema'
 
 type Phase = 'start' | 'question' | 'reveal' | 'done'
-
-interface PerQuestion {
-  correct: boolean
-  points: number
-  answeredMs: number
-}
 
 const SHAPES = ['◆', '▲', '●', '■']
 const SHAPE_NAMES = ['Diamond', 'Triangle', 'Circle', 'Square']
@@ -57,11 +52,14 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
   const [mode, setMode] = useState<'timed' | 'practice'>(lastMode)
   const [phase, setPhase] = useState<Phase>('start')
   const [qIndex, setQIndex] = useState(0)
-  const [results, setResults] = useState<PerQuestion[]>([])
+  const [results, setResults] = useState<RunResult[]>([])
   const [picked, setPicked] = useState<number | null>(null)
   const [remainingMs, setRemainingMs] = useState(0)
   const [mediaUrl, setMediaUrl] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState<GameState | null>(null)
+  const [savedLoaded, setSavedLoaded] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const restartRequested = searchParams.get('restart') === '1'
   const navigate = useNavigate()
 
   // Load an interrupted round for this quiz (if any) so the start screen can offer "Resume".
@@ -75,11 +73,22 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
         s = undefined
       }
       setSaved(s ?? null)
+      setSavedLoaded(true)
     })
     return () => {
       alive = false
     }
   }, [quiz])
+
+  // Arriving via Home's "Restart" (?restart=1): discard any interrupted round and start fresh.
+  const didAutoRestart = useRef(false)
+  useEffect(() => {
+    if (!restartRequested || !savedLoaded || didAutoRestart.current) return
+    didAutoRestart.current = true
+    setSearchParams({}, { replace: true })
+    startGame()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restartRequested, savedLoaded])
 
   // Persist the snapshot whenever a question begins (results.length === qIndex).
   useEffect(() => {
@@ -163,7 +172,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
       choice !== null && Boolean(question.answers[choice]?.correct)
     const points = scoreAnswer({ mode, correct, remainingMs: rem, totalMs })
     setPicked(choice)
-    setResults((r) => [...r, { correct, points, answeredMs }])
+    setResults((r) => [...r, { correct, points, answeredMs, picked: choice }])
     setPhase('reveal')
   }
 
@@ -206,7 +215,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }
 
-  async function recordHistory(finalResults: PerQuestion[]) {
+  async function recordHistory(finalResults: RunResult[]) {
     const s = finalResults.reduce((sum, r) => sum + r.points, 0)
     const c = finalResults.filter((r) => r.correct).length
     await clearGameState(quiz.id)
@@ -220,6 +229,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
       total: quiz.questions.length,
       durationMs: Date.now() - startAtRef.current,
       playedAt: new Date().toISOString(),
+      review: finalResults.map((r) => ({ correct: r.correct, points: r.points, answeredMs: r.answeredMs, picked: r.picked ?? null })),
     })
   }
 
@@ -243,7 +253,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
                 Resume
               </button>
               <button className="ghost" onClick={startGame}>
-                Discard & start new
+                Restart
               </button>
             </div>
           </div>
@@ -294,6 +304,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
         <p>
           {correctCount} of {quiz.questions.length} correct
         </p>
+        <ReviewList questions={quiz.questions} results={results} />
         <div className="spread">
           <button className="primary" onClick={() => { setResults([]); startGame() }}>
             Play again

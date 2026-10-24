@@ -43,6 +43,15 @@ export interface Quiz {
   source?: string
 }
 
+/** Outcome for a single question within a run (stored per question, in question order). */
+export interface RunResult {
+  correct: boolean
+  points: number
+  answeredMs: number
+  /** Index into the question's answers; null/undefined = no answer (timed out). */
+  picked?: number | null
+}
+
 export interface HistoryEntry {
   /** autoIncrement */
   id?: number
@@ -56,6 +65,8 @@ export interface HistoryEntry {
   total: number
   durationMs: number
   playedAt: string
+  /** Per-question results, index-aligned with the quiz questions. Missing on old runs. */
+  review?: RunResult[]
 }
 
 export function quizMaxScore(quiz: Quiz): number {

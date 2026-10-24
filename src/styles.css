@@ -146,6 +146,84 @@ h2 {
   flex-wrap: wrap;
 }
 
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.page-head h1 {
+  margin: 0;
+}
+
+.folder-section {
+  margin: 18px 0;
+}
+
+.folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.folder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 4px;
+  font-size: 1.02rem;
+}
+
+.folder-caret {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+
+.folder-caret.open {
+  transform: rotate(90deg);
+}
+
+.folder-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.folder-pick {
+  text-align: left;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.folder-pick.current {
+  outline: 2px solid var(--triangle);
+}
+
+.folder-name-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  max-width: 320px;
+}
+
+.folder-name-form input {
+  flex: 1;
+  min-width: 0;
+}
+
 button {
   font: inherit;
   border: none;
@@ -338,6 +416,92 @@ label {
   font-weight: 900;
   color: var(--circle);
   text-shadow: 0 4px 18px rgba(245, 184, 0, 0.35);
+}
+
+.review-list {
+  text-align: left;
+  margin: 16px 0 4px;
+}
+
+.review-heading {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.review-perfect {
+  text-align: center;
+  color: var(--circle);
+  font-weight: 700;
+}
+
+.review-item {
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 4px solid var(--diamond);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.review-item .review-prompt {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.review-answer {
+  font-size: 0.92rem;
+  margin: 2px 0;
+}
+
+.review-answer.wrong {
+  color: var(--diamond);
+}
+
+.review-answer.right {
+  color: #2ecc71;
+}
+
+.review-item .explanation {
+  margin-top: 8px;
+}
+
+.review-right {
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.review-right summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.review-right ul {
+  margin: 8px 0 0;
+  padding-left: 4px;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.review-right li {
+  margin: 4px 0;
+}
+
+table.history td.review-cell {
+  padding: 0 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+table.history td.review-cell details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 4px 0;
+}
+
+table.history td.review-cell .review-list {
+  margin: 8px 0 4px;
 }
 
 .center {
