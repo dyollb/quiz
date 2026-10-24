@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { HistoryEntry, Quiz } from './schema'
+import { newId } from './schema'
+import type { HistoryEntry, Quiz, RunResult } from './schema'
 
 /** Blob + provenance for an image referenced by questions (`image.ref`). */
 export interface MediaRecord {
@@ -32,10 +33,24 @@ export interface GameState {
   /** Index of the question that was in progress. */
   qIndex: number
   /** Per-question outcomes for questions 0..qIndex-1. */
-  results: Array<{ correct: boolean; points: number; answeredMs: number }>
+  results: RunResult[]
   /** Epoch ms when the game started (for the final duration). */
   startedAt: number
   updatedAt: string
+}
+
+/** A user-created group that organizes quizzes on the Home screen. */
+export interface Folder {
+  id: string
+  name: string
+  createdAt: string
+}
+
+/** Quiz → folder assignment. Quizzes without a row are "Ungrouped". Kept out of
+ * the Quiz record so re-imports and .quiz exports never touch groupings. */
+export interface QuizFolder {
+  quizId: string
+  folderId: string
 }
 
 interface QuizDB extends DBSchema {
@@ -48,10 +63,12 @@ interface QuizDB extends DBSchema {
   }
   staged: { key: string; value: StagedRecord }
   gameState: { key: string; value: GameState }
+  folders: { key: string; value: Folder }
+  quizFolders: { key: string; value: QuizFolder }
 }
 
 const DB_NAME = 'quiztime'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 let dbPromise: Promise<IDBPDatabase<QuizDB>> | null = null
 
@@ -75,6 +92,12 @@ export function getDB(): Promise<IDBPDatabase<QuizDB>> {
         }
         if (!db.objectStoreNames.contains('gameState')) {
           db.createObjectStore('gameState', { keyPath: 'quizId' })
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' })
+        }
+        if (!db.objectStoreNames.contains('quizFolders')) {
+          db.createObjectStore('quizFolders', { keyPath: 'quizId' })
         }
       },
     })
@@ -137,9 +160,10 @@ export async function deleteQuiz(id: string): Promise<{ removedMedia: number; re
     quiz.questions.map((q) => q.image?.ref).filter((r): r is string => Boolean(r)),
   )
 
-  const tx = db.transaction(['quizzes', 'media', 'history', 'gameState'], 'readwrite')
+  const tx = db.transaction(['quizzes', 'media', 'history', 'gameState', 'quizFolders'], 'readwrite')
   await tx.objectStore('quizzes').delete(id)
   await tx.objectStore('gameState').delete(id)
+  await tx.objectStore('quizFolders').delete(id)
 
   let removedRuns = 0
   const historyStore = tx.objectStore('history')
@@ -270,4 +294,58 @@ export async function listGameStateQuizIds(): Promise<Set<string>> {
   const db = await getDB()
   const keys = await db.getAllKeys('gameState')
   return new Set(keys as string[])
+}
+
+/* ------------------------------ folders (quiz groups) ------------------------------ */
+
+/** All folders, alphabetically by name. */
+export async function listFolders(): Promise<Folder[]> {
+  const db = await getDB()
+  const all = await db.getAll('folders')
+  return all.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Create a folder and return it (empty/whitespace names rejected). */
+export async function createFolder(name: string): Promise<Folder | undefined> {
+  const trimmed = name.trim()
+  if (!trimmed) return undefined
+  const db = await getDB()
+  const folder: Folder = { id: newId(), name: trimmed, createdAt: new Date().toISOString() }
+  await db.put('folders', folder)
+  return folder
+}
+
+export async function renameFolder(id: string, name: string): Promise<void> {
+  const trimmed = name.trim()
+  const db = await getDB()
+  const folder = await db.get('folders', id)
+  if (!folder || !trimmed) return
+  await db.put('folders', { ...folder, name: trimmed })
+}
+
+/** Delete a folder; its quizzes keep existing but become ungrouped. */
+export async function deleteFolder(id: string): Promise<void> {
+  const db = await getDB()
+  const tx = db.transaction(['folders', 'quizFolders'], 'readwrite')
+  await tx.objectStore('folders').delete(id)
+  for await (const cursor of tx.objectStore('quizFolders').iterate()) {
+    if (cursor.value.folderId === id) await cursor.delete()
+  }
+  await tx.done
+}
+
+/** Assign a quiz to a folder, or ungroup it when folderId is null. */
+export async function moveQuizToFolder(quizId: string, folderId: string | null): Promise<void> {
+  const db = await getDB()
+  if (folderId) await db.put('quizFolders', { quizId, folderId })
+  else await db.delete('quizFolders', quizId)
+}
+
+/** Map of quizId → folderId for every grouped quiz. */
+export async function listQuizFolders(): Promise<Map<string, string>> {
+  const db = await getDB()
+  const rows = await db.getAll('quizFolders')
+  const map = new Map<string, string>()
+  for (const row of rows) map.set(row.quizId, row.folderId)
+  return map
 }

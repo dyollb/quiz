@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import ReviewList from '../components/ReviewList'
 import { clearHistory, deleteHistoryRun, getQuiz, listHistoryForQuiz } from '../lib/db'
 import type { HistoryEntry, Quiz } from '../lib/schema'
 import { ModePill, formatDate } from './History'
@@ -67,23 +68,35 @@ export default function HistoryDetail() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    {r.score}/{r.maxScore}
-                  </td>
-                  <td>
-                    {r.correct}/{r.total}
-                  </td>
-                  <td>
-                    <ModePill mode={r.mode} />
-                  </td>
-                  <td className="muted small">{formatDate(r.playedAt)}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button className="ghost" onClick={() => r.id && void removeRun(r.id)} title="Delete run">
-                      ✕
-                    </button>
-                  </td>
-                </tr>
+                <Fragment key={r.id}>
+                  <tr>
+                    <td>
+                      {r.score}/{r.maxScore}
+                    </td>
+                    <td>
+                      {r.correct}/{r.total}
+                    </td>
+                    <td>
+                      <ModePill mode={r.mode} />
+                    </td>
+                    <td className="muted small">{formatDate(r.playedAt)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="ghost" onClick={() => r.id && void removeRun(r.id)} title="Delete run">
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                  {r.review && r.review.length > 0 && (
+                    <tr>
+                      <td className="review-cell" colSpan={5}>
+                        <details>
+                          <summary>Review answers</summary>
+                          <ReviewList questions={quiz.questions} results={r.review} />
+                        </details>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

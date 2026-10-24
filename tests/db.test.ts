@@ -4,6 +4,8 @@ import {
   addHistory,
   clearGameState,
   clearHistory,
+  createFolder,
+  deleteFolder,
   deleteHistoryRun,
   deleteQuiz,
   getBestScore,
@@ -11,9 +13,13 @@ import {
   getGameState,
   getMedia,
   getQuiz,
+  listFolders,
   listGameStateQuizIds,
   listHistoryForQuiz,
+  listQuizFolders,
   listQuizzes,
+  moveQuizToFolder,
+  renameFolder,
   saveGameState,
   saveQuiz,
   stageFile,
@@ -29,6 +35,8 @@ async function clearAll() {
     db.clear('history'),
     db.clear('staged'),
     db.clear('gameState'),
+    db.clear('folders'),
+    db.clear('quizFolders'),
   ])
 }
 
@@ -159,6 +167,23 @@ describe('db: history helpers', () => {
     await addHistory(run('A', 100))
     expect(await getBestScore('A')).toBe(900)
   })
+
+  it('persists the per-question review and round-trips it', async () => {
+    const entry: HistoryEntry = {
+      ...run('A', 500),
+      review: [
+        { correct: true, points: 500, answeredMs: 1000, picked: 0 },
+        { correct: false, points: 0, answeredMs: 2000, picked: 1 },
+        { correct: false, points: 0, answeredMs: 3000, picked: null },
+      ],
+    }
+    await addHistory(entry)
+    const [saved] = await listHistoryForQuiz('A')
+    expect(saved.review).toEqual(entry.review)
+    // Old-style entries without a review stay review-less.
+    await addHistory(run('B'))
+    expect((await listHistoryForQuiz('B'))[0].review).toBeUndefined()
+  })
 })
 
 describe('db: listQuizzes ordering', () => {
@@ -174,9 +199,20 @@ describe('db: game state (resume)', () => {
     quizId,
     mode: 'timed' as const,
     qIndex,
-    results: Array.from({ length: qIndex }, (_, i) => ({ correct: i % 2 === 0, points: 500 + i, answeredMs: 1000 })),
+    results: Array.from({ length: qIndex }, (_, i) => ({
+      correct: i % 2 === 0,
+      points: 500 + i,
+      answeredMs: 1000,
+      picked: i % 3 === 2 ? null : i % 2,
+    })),
     startedAt: 1234,
     updatedAt: new Date().toISOString(),
+  })
+
+  it('keeps the picked answer index in snapshots', async () => {
+    await saveGameState(state('A', 3))
+    const s = await getGameState('A')
+    expect(s?.results.map((r) => r.picked)).toEqual([0, 1, null])
   })
 
   it('saves, reads back, and overwrites per quiz', async () => {
@@ -208,5 +244,47 @@ describe('db: game state (resume)', () => {
     await saveGameState(state('A', 4))
     await deleteQuiz('A')
     expect(await getGameState('A')).toBeUndefined()
+  })
+})
+
+describe('db: folders (quiz groups)', () => {
+  it('creates, lists alphabetically and renames folders', async () => {
+    await createFolder('Zulu')
+    const b = await createFolder('Alpha')
+    expect((await listFolders()).map((f) => f.name)).toEqual(['Alpha', 'Zulu'])
+    await renameFolder(b!.id, 'Middle')
+    expect((await listFolders()).map((f) => f.name)).toEqual(['Middle', 'Zulu'])
+    expect(await createFolder('  ')).toBeUndefined()
+    expect(await createFolder('x')).toBeDefined()
+  })
+
+  it('moves quizzes between folders and ungroups them', async () => {
+    await saveQuiz(makeQuiz('A', []))
+    const f = await createFolder('Schule')
+    await moveQuizToFolder('A', f!.id)
+    expect((await listQuizFolders()).get('A')).toBe(f!.id)
+    await moveQuizToFolder('A', null)
+    expect((await listQuizFolders()).has('A')).toBe(false)
+  })
+
+  it('deleting a folder ungroups its quizzes', async () => {
+    const f = await createFolder('Temp')
+    await moveQuizToFolder('A', f!.id)
+    await moveQuizToFolder('B', f!.id)
+    await moveQuizToFolder('C', 'other-folder')
+    await deleteFolder(f!.id)
+    const map = await listQuizFolders()
+    expect(map.has('A')).toBe(false)
+    expect(map.has('B')).toBe(false)
+    expect(map.get('C')).toBe('other-folder')
+    expect(await listFolders()).toHaveLength(0)
+  })
+
+  it('deleting a quiz removes its folder mapping', async () => {
+    await saveQuiz(makeQuiz('A', []))
+    const f = await createFolder('Schule')
+    await moveQuizToFolder('A', f!.id)
+    await deleteQuiz('A')
+    expect((await listQuizFolders()).has('A')).toBe(false)
   })
 })
