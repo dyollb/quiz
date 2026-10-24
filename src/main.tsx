@@ -44,7 +44,8 @@ if ('launchQueue' in window && 'LaunchParams' in window) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    {/* GitHub Pages serves the app under /<repo>/ — follow Vite's base URL. */}
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <App />
     </BrowserRouter>
   </StrictMode>,

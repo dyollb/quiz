@@ -14,7 +14,13 @@ const https =
     ? { key: readFileSync(keyPath), cert: readFileSync(certPath) }
     : undefined
 
+// GitHub Pages serves the site under /<repo>/. In Actions builds the repo name
+// comes from GITHUB_REPOSITORY ("owner/repo"); local dev/build stays at "/".
+const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1]
+const base = repoName ? `/${repoName}/` : '/'
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -24,24 +30,24 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: false, // registered via virtual:pwa-register in main.tsx
       manifest: {
-        id: '/',
+        id: base,
         name: 'QuizTime',
         short_name: 'QuizTime',
         description: 'Kahoot-style single-player quiz practice with CSV/.quiz import.',
-        start_url: '/',
-        scope: '/',
+        start_url: base,
+        scope: base,
         display: 'standalone',
         background_color: '#20063b',
         theme_color: '#46178f',
         icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: `${base}icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
+          { src: `${base}icons/icon-512.png`, sizes: '512x512', type: 'image/png' },
+          { src: `${base}icons/icon-maskable-512.png`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         // Desktop Chrome/Edge only: double-clicking a .quiz file opens the installed app.
         file_handlers: [
           {
-            action: '/',
+            action: base,
             accept: {
               'application/vnd.quiz+zip': ['.quiz'],
               'application/zip': ['.quiz'],
@@ -50,7 +56,7 @@ export default defineConfig({
         ],
         // Installed PWA on Chrome/Edge (desktop + Android): appears in the OS share sheet.
         share_target: {
-          action: '/share-target',
+          action: `${base}share-target`,
           method: 'POST',
           enctype: 'multipart/form-data',
           params: {

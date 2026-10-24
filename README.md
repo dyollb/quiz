@@ -19,11 +19,17 @@ A Kahoot-style, single-player quiz PWA. Import questions from CSV (your format o
 
 ```bash
 npm install
-npm run dev        # https://localhost:5173 (LAN HTTPS setup for phone installs: see docs)
+npm run dev        # http://localhost:5173 (https on the LAN when certs exist — see docs)
 npm run test       # vitest suite
 ```
 
-Serving over LAN HTTPS with mkcert (for installing the PWA on a phone and using the share target), offline hosting options, and the dev-only quiz builder are covered in [docs/development.md](docs/development.md).
+## Live app & installing on your phone
+
+The app is hosted at **<https://dyollb.github.io/quiz/>**. Open that URL on your phone → browser menu → **Add to Home screen / Install app** — that's the whole install; no certificates, no server to run, and it works offline afterwards (quizzes and scores stay on-device).
+
+Ship changes from a feature branch with `./scripts/ship.sh`: it opens a PR and arms auto-merge, CI runs tests + build, and the merged commit is published to GitHub Pages automatically (`main` rejects direct pushes).
+
+The repo is public, but the site is excluded from search engines — share the URL as you like, and just keep personal quiz files out of the repo. LAN HTTPS serving with mkcert (optional on-device testing of unmerged changes), offline notes, and the dev-only quiz builder are covered in [docs/development.md](docs/development.md).
 
 ## Getting quizzes in
 
