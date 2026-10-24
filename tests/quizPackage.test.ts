@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { packQuiz, unpackQuiz, quizFileName } from '../src/lib/quizPackage'
+import { packQuiz, unpackQuiz, quizFileName, QuizUpgradeNeededError } from '../src/lib/quizPackage'
 import type { Quiz } from '../src/lib/schema'
 
 function sampleQuiz(): Quiz {
@@ -81,5 +81,76 @@ describe('.quiz package', () => {
   it('quizFileName sanitises odd characters', () => {
     expect(quizFileName('Érdem/世 test??')).toMatch(/^[\w-]+\.quiz$/)
     expect(quizFileName('   ')).toBe('quiz.quiz')
+  })
+})
+
+describe('.quiz package — question types', () => {
+  function typedQuiz(): Quiz {
+    return {
+      v: 2,
+      id: '22222222-2222-4222-8222-222222222222',
+      title: 'Typed quiz',
+      createdAt: new Date().toISOString(),
+      timer: { enabled: true, defaultSeconds: 20 },
+      source: 'test',
+      questions: [
+        {
+          id: 'q1',
+          type: 'multi',
+          prompt: 'Pick the primes?',
+          answers: [
+            { id: 'a1', text: '2', correct: true },
+            { id: 'a2', text: '4', correct: false },
+            { id: 'a3', text: '5', correct: true },
+          ],
+        },
+        {
+          id: 'q2',
+          type: 'order',
+          correctOrder: [2, 1, 3],
+          prompt: 'Put in order?',
+          answers: [
+            { id: 'a1', text: 'Second', correct: true },
+            { id: 'a2', text: 'First', correct: true },
+            { id: 'a3', text: 'Third', correct: true },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('round-trips multi/order fields', async () => {
+    const { blob } = await packQuiz(typedQuiz(), new Map())
+    const out = await unpackQuiz(blob)
+    expect(out.quiz.v).toBe(2)
+    expect(out.quiz.questions[0].type).toBe('multi')
+    expect(out.quiz.questions[1].type).toBe('order')
+    expect(out.quiz.questions[1].correctOrder).toEqual([2, 1, 3])
+  })
+
+  it('rejects unknown question types with an update-the-app error', async () => {
+    const raw = typedQuiz() as unknown as Record<string, unknown>
+    const { zipSync, strToU8 } = await import('fflate')
+    const future = JSON.parse(JSON.stringify(raw))
+    future.questions[0].type = 'matching'
+    const blob = new Blob([zipSync({ 'quiz.json': strToU8(JSON.stringify(future)) })])
+    await expect(unpackQuiz(blob)).rejects.toThrow(QuizUpgradeNeededError)
+    await expect(unpackQuiz(blob)).rejects.toThrow(/newer version of QuizTime/i)
+  })
+
+  it('rejects future quiz schema versions', async () => {
+    const { zipSync, strToU8 } = await import('fflate')
+    const future = JSON.parse(JSON.stringify(typedQuiz()))
+    future.v = 3
+    const blob = new Blob([zipSync({ 'quiz.json': strToU8(JSON.stringify(future)) })])
+    await expect(unpackQuiz(blob)).rejects.toThrow(/v3/i)
+  })
+
+  it('rejects a malformed order question missing correctOrder', async () => {
+    const { zipSync, strToU8 } = await import('fflate')
+    const broken = JSON.parse(JSON.stringify(typedQuiz()))
+    delete broken.questions[1].correctOrder
+    const blob = new Blob([zipSync({ 'quiz.json': strToU8(JSON.stringify(broken)) })])
+    await expect(unpackQuiz(blob)).rejects.toThrow(/order question/i)
   })
 })

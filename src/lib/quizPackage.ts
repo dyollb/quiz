@@ -1,8 +1,47 @@
 import { zipSync, unzipSync, strFromU8, strToU8 } from 'fflate'
-import { newId, type Quiz } from './schema'
+import {
+  newId,
+  isPermutation,
+  quizVersionFor,
+  QUESTION_TYPES,
+  SUPPORTED_QUIZ_VERSION,
+  type Question,
+  type QuestionType,
+  type Quiz,
+} from './schema'
 
 export const QUIZ_ZIP_MIME = 'application/vnd.quiz+zip'
 export const QUIZ_EXT = '.quiz'
+
+/** Thrown when a quiz uses question types or a schema version this build predates. */
+export class QuizUpgradeNeededError extends Error {
+  constructor(what: string) {
+    super(
+      `This quiz needs a newer version of QuizTime (${what}). ` +
+        `Refresh or reinstall the app from its URL, then import again.`,
+    )
+  }
+}
+
+/**
+ * Refuse quizzes this build cannot play correctly (newer schema version or unknown
+ * question types), instead of silently mis-rendering them as plain multiple choice.
+ */
+export function requireSupportedFeatures(raw: Quiz): void {
+  const v = typeof raw.v === 'number' ? raw.v : 1
+  if (v > SUPPORTED_QUIZ_VERSION) {
+    throw new QuizUpgradeNeededError(`quiz format v${v}, this app supports up to v${SUPPORTED_QUIZ_VERSION}`)
+  }
+  for (const q of raw.questions ?? []) {
+    const t = q?.type
+    if (t !== undefined && !QUESTION_TYPES.includes(t as QuestionType)) {
+      throw new QuizUpgradeNeededError(`question type "${String(t)}"`)
+    }
+    if (t === 'order' && !isPermutation(q.correctOrder, q.answers?.length ?? 0)) {
+      throw new Error('Malformed order question: "correctOrder" must list every answer exactly once.')
+    }
+  }
+}
 
 export interface PackedQuiz {
   blob: Blob
@@ -56,8 +95,22 @@ function isQuizShape(v: unknown): v is Quiz {
 
 /** Normalise/repair a loosely-typed quiz.json into a valid Quiz. */
 function normaliseQuiz(raw: Quiz, opts?: { newIdIfDuplicate?: boolean }): Quiz {
+  const questions: Question[] = raw.questions.map((q) => ({
+    id: q.id || newId(),
+    prompt: q.prompt ?? '',
+    ...(q.type ? { type: q.type } : {}),
+    ...(q.correctOrder ? { correctOrder: q.correctOrder } : {}),
+    answers: (q.answers ?? []).map((a) => ({
+      id: a.id || newId(),
+      text: a.text ?? '',
+      correct: Boolean(a.correct),
+    })),
+    ...(q.timeLimit ? { timeLimit: q.timeLimit } : {}),
+    ...(q.explanation ? { explanation: q.explanation } : {}),
+    ...(q.image ? { image: { ref: q.image.ref, alt: q.image.alt, credit: q.image.credit } } : {}),
+  }))
   const quiz: Quiz = {
-    v: 1,
+    v: quizVersionFor(questions),
     id: opts?.newIdIfDuplicate ? newId() : raw.id || newId(),
     title: raw.title || 'Untitled quiz',
     createdAt: raw.createdAt || new Date().toISOString(),
@@ -66,18 +119,7 @@ function normaliseQuiz(raw: Quiz, opts?: { newIdIfDuplicate?: boolean }): Quiz {
       defaultSeconds: raw.timer?.defaultSeconds ?? 20,
     },
     source: raw.source ?? 'quiz-zip',
-    questions: raw.questions.map((q) => ({
-      id: q.id || newId(),
-      prompt: q.prompt ?? '',
-      answers: (q.answers ?? []).map((a) => ({
-        id: a.id || newId(),
-        text: a.text ?? '',
-        correct: Boolean(a.correct),
-      })),
-      ...(q.timeLimit ? { timeLimit: q.timeLimit } : {}),
-      ...(q.explanation ? { explanation: q.explanation } : {}),
-      ...(q.image ? { image: { ref: q.image.ref, alt: q.image.alt, credit: q.image.credit } } : {}),
-    })),
+    questions,
   }
   return quiz
 }
@@ -100,6 +142,7 @@ export async function unpackQuiz(file: Blob): Promise<UnpackedQuiz> {
     throw new Error('quiz.json inside the .quiz package is not valid JSON.')
   }
   if (!isQuizShape(raw)) throw new Error('quiz.json does not look like a quiz.')
+  requireSupportedFeatures(raw)
   const quiz = normaliseQuiz(raw)
 
   const images = new Map<string, Blob>()

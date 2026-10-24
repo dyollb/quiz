@@ -197,6 +197,9 @@ function QuestionEditor({
     <div className="builder-q">
       <div className="card-row">
         <strong>Q{index + 1}</strong>
+        {question.type && question.type !== 'single' && (
+          <span className="type-badge">{question.type === 'multi' ? 'multiple answers' : 'put in order'}</span>
+        )}
         {question.image ? (
           <button className="ghost" onClick={onDetach}>
             Remove image
@@ -207,10 +210,13 @@ function QuestionEditor({
       <div className="muted small">
         {question.answers.map((a, i) => (
           <span key={a.id} style={{ marginRight: 10 }}>
-            {a.correct ? '✔' : '○'} {i + 1}. {a.text}
+            {question.type === 'order' ? '▸' : a.correct ? '✔' : '○'} {i + 1}. {a.text}
           </span>
         ))}
       </div>
+      {question.type === 'order' && (
+        <div className="muted small">Correct order: {(question.correctOrder ?? []).join(' → ')}</div>
+      )}
 
       {question.image && <ImagePreview question={question} />}
 

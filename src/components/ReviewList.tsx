@@ -1,9 +1,11 @@
-import type { Question, RunResult } from '../lib/schema'
+import { questionType, type Question, type RunResult } from '../lib/schema'
 
 /**
  * Per-question review of a finished run: wrong answers are listed in detail
  * (your answer vs. the correct answer, plus the explanation when present),
  * correct answers are grouped under a collapsible summary.
+ * Handles all question types: single (one answer), multi (answer sets) and
+ * order (full sequences from correctOrder).
  * `results` is index-aligned with `questions`; mismatched entries are skipped.
  */
 export default function ReviewList({
@@ -31,16 +33,40 @@ export default function ReviewList({
         <>
           <h3 className="review-heading">Review your answers</h3>
           {wrong.map(({ question, result }) => {
-            const correctAnswer = question.answers.find((a) => a.correct)
-            const pickedAnswer = result.picked != null ? question.answers[result.picked] : undefined
+            const type = questionType(question)
+            const picked = Array.isArray(result.picked)
+              ? result.picked
+              : result.picked != null
+                ? [result.picked]
+                : []
+            const textAt = (i: number) => question.answers[i]?.text ?? '?'
+            let correctLine: string | undefined
+            let yourLine: string | undefined
+            if (type === 'order') {
+              correctLine = (question.correctOrder ?? [])
+                .map((n, pos) => `${pos + 1}. ${question.answers[n - 1]?.text ?? '?'}`)
+                .join(' → ')
+              yourLine = picked.length ? picked.map((i, pos) => `${pos + 1}. ${textAt(i)}`).join(' → ') : undefined
+            } else if (type === 'multi') {
+              correctLine = question.answers
+                .filter((a) => a.correct)
+                .map((a) => a.text)
+                .join(', ')
+              yourLine = picked.length ? picked.map(textAt).join(', ') : undefined
+            } else {
+              correctLine = question.answers.find((a) => a.correct)?.text
+              yourLine = picked.length ? textAt(picked[0]) : undefined
+            }
             return (
               <div className="review-item" key={question.id}>
                 <div className="review-prompt">{question.prompt}</div>
                 <div className="review-answer wrong">
-                  ✘ Your answer: {pickedAnswer ? pickedAnswer.text : 'No answer — time’s up'}
+                  ✘ Your answer: {yourLine ?? 'No answer — time’s up'}
                 </div>
-                {correctAnswer && (
-                  <div className="review-answer right">✔ Correct answer: {correctAnswer.text}</div>
+                {correctLine && (
+                  <div className="review-answer right">
+                    ✔ {type === 'order' ? 'Correct order' : type === 'multi' ? 'Correct answers' : 'Correct answer'}: {correctLine}
+                  </div>
                 )}
                 {question.explanation && <div className="explanation">{question.explanation}</div>}
               </div>

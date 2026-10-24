@@ -1,5 +1,5 @@
 import Papa from 'papaparse'
-import { newId, type Question, type Quiz } from './schema'
+import { newId, quizVersionFor, type Question, type QuestionType, type Quiz } from './schema'
 
 export interface CsvImportResult {
   quiz: Quiz
@@ -13,7 +13,7 @@ const DEFAULT_TIME = 20
 
 function makeQuiz(title: string, questions: Question[], format: string, timeLimitSec?: number): Quiz {
   return {
-    v: 1,
+    v: quizVersionFor(questions),
     id: newId(),
     title: title.trim() || 'Untitled quiz',
     createdAt: new Date().toISOString(),
@@ -40,18 +40,81 @@ function parseCorrect(cell: string | undefined, answerCount: number, qIndex: num
   return [...new Set(indices)]
 }
 
+/**
+ * Parse the optional `type` column: blank = legacy (single, or multi when several
+ * answers are correct), or explicitly 'single' | 'multi' | 'order'.
+ */
+function parseDeclaredType(cell: string | undefined, qIndex: number): QuestionType | '' {
+  const raw = (cell ?? '').trim().toLowerCase()
+  if (raw === '') return ''
+  if (raw === 'single' || raw === 'multi' || raw === 'order') return raw
+  throw new CsvImportError(
+    `Question ${qIndex + 1}: unknown type "${raw}" (use single, multi or order)`,
+  )
+}
+
+/**
+ * Validate a `correct` cell against the declared question type.
+ * - single: exactly one correct answer
+ * - multi:  at least two correct, at least one wrong
+ * - order:  a full sequence (every answer exactly once) that is NOT the listed order
+ * Legacy rows (declared '') normalise: >1 correct flag becomes 'multi'.
+ */
+function resolveType(
+  declared: QuestionType | '',
+  correct: number[],
+  answerCount: number,
+  qIndex: number,
+): QuestionType {
+  const label = `Question ${qIndex + 1}`
+  if (declared === 'single') {
+    if (correct.length !== 1) {
+      throw new CsvImportError(`${label}: a single question needs exactly one correct answer`)
+    }
+    return 'single'
+  }
+  if (declared === 'multi') {
+    if (correct.length < 2) {
+      throw new CsvImportError(`${label}: a multi question needs at least two correct answers`)
+    }
+    if (correct.length >= answerCount) {
+      throw new CsvImportError(`${label}: a multi question needs at least one wrong answer`)
+    }
+    return 'multi'
+  }
+  if (declared === 'order') {
+    if (correct.length !== answerCount) {
+      throw new CsvImportError(
+        `${label}: an order question's correct column must list every answer once, in the right sequence`,
+      )
+    }
+    if (correct.every((v, i) => v === i + 1)) {
+      throw new CsvImportError(
+        `${label}: an order question's answers are listed in the correct order — shuffle them`,
+      )
+    }
+    return 'order'
+  }
+  // Legacy row: more than one correct flag can only be scored as multi-select.
+  return correct.length > 1 ? 'multi' : 'single'
+}
+
 function buildQuestion(
   prompt: string,
   answerCells: string[],
   correctIdx: number[],
   timeLimit: number | undefined,
   explanation: string | undefined,
+  type: QuestionType,
 ): Question {
   const answers = answerCells.map((text) => ({ id: newId(), text: text.trim(), correct: false }))
   for (const i of correctIdx) answers[i - 1].correct = true
   return {
     id: newId(),
     prompt: prompt.trim(),
+    ...(type !== 'single' ? { type } : {}),
+    // For order questions `correctIdx` is the tap sequence, not just a membership set.
+    ...(type === 'order' ? { correctOrder: correctIdx } : {}),
     answers,
     ...(timeLimit ? { timeLimit } : {}),
     ...(explanation?.trim() ? { explanation: explanation.trim() } : {}),
@@ -60,7 +123,8 @@ function buildQuestion(
 
 /**
  * Detects and parses both supported CSV layouts:
- *  A. simple:  question,answer1..answer4,correct,explanation[,time_limit][,title]
+ *  A. simple:  question,answer1..answer4,correct,explanation[,type][,time_limit][,title]
+ *     (type = single|multi|order; blank = single, or multi when correct lists 2+)
  *  B. Kahoot export: header row containing "Question - 120 max length" (or similar),
  *     leading index column, "Time limit" + "Correct answer(s)" columns, junk/trailing rows.
  */
@@ -109,6 +173,7 @@ function parseSimple(
   const qCol = col(header, 'question')
   const aCols = [1, 2, 3, 4].map((i) => col(header, `answer${i}`))
   const correctCol = col(header, 'correct', 'correct answer', 'correct answers', 'answer')
+  const typeCol = col(header, 'type', 'question type')
   const explCol = col(header, 'explanation', 'explenation', 'comment')
   const timeCol = col(header, 'time_limit', 'time limit', 'time', 'seconds')
   const titleCol = col(header, 'title', 'quiz', 'quiz title')
@@ -124,12 +189,21 @@ function parseSimple(
     const row = rows[r]
     const prompt = row[qCol]?.trim()
     if (!prompt) continue
-    const answerCells = answerCols.map((c) => row[c] ?? '')
+    const declared = parseDeclaredType(typeCol >= 0 ? row[typeCol] : undefined, questions.length)
+    let answerCells = answerCols.map((c) => row[c] ?? '')
     if (!answerCells[0]?.trim() || !answerCells[1]?.trim()) {
       warnings.push(`Skipped row ${r + 1}: needs at least two answers.`)
       continue
     }
+    if (declared === 'order') {
+      answerCells = answerCells.filter((a) => a.trim())
+      if (answerCells.length < 3) {
+        warnings.push(`Skipped row ${r + 1}: order questions need at least three answers.`)
+        continue
+      }
+    }
     const correct = parseCorrect(row[correctCol], answerCells.length, questions.length)
+    const type = resolveType(declared, correct, answerCells.length, questions.length)
     const t = timeCol >= 0 ? Number(row[timeCol]) : NaN
     questions.push(
       buildQuestion(
@@ -138,6 +212,7 @@ function parseSimple(
         correct,
         Number.isFinite(t) && t > 0 ? Math.round(t) : undefined,
         explCol >= 0 ? row[explCol] : undefined,
+        type,
       ),
     )
   }
@@ -181,9 +256,11 @@ function parseKahoot(
     }
     const usedCells = answerCells.slice(0, filled.length)
     const correct = parseCorrect(row[correctCol], usedCells.length, questions.length)
+    // Kahoot exports have no type column; 2+ correct answers normalise to multi-select.
+    const type = resolveType('', correct, usedCells.length, questions.length)
     const t = timeCol >= 0 ? Number(row[timeCol]) : NaN
     questions.push(
-      buildQuestion(prompt, usedCells, correct, Number.isFinite(t) && t > 0 ? Math.round(t) : undefined, undefined),
+      buildQuestion(prompt, usedCells, correct, Number.isFinite(t) && t > 0 ? Math.round(t) : undefined, undefined, type),
     )
   }
   if (!questions.length) throw new CsvImportError('No valid questions found in the Kahoot CSV.')

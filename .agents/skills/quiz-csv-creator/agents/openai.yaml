@@ -1,6 +1,6 @@
 interface:
   display_name: "Quiz CSV Creator"
-  short_description: "Turn teaching texts into import-ready quiz CSVs"
+  short_description: "Turn teaching texts into import-ready quiz CSVs (single-choice, multi-select, put-in-order)"
   brand_color: "#F5B800"
 policy:
   allow_implicit_invocation: true

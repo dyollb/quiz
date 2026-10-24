@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import ReviewList from '../components/ReviewList'
 import { addHistory, clearGameState, getGameState, getMediaUrl, getQuiz, saveGameState, type GameState } from '../lib/db'
 import { BASE_POINTS, scoreAnswer } from '../lib/scoring'
-import { quizMaxScore, type Quiz, type RunResult } from '../lib/schema'
+import { questionSeconds, questionType, quizMaxScore, type QuestionType, type Quiz, type RunResult } from '../lib/schema'
 
 type Phase = 'start' | 'question' | 'reveal' | 'done'
 
@@ -53,7 +53,11 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
   const [phase, setPhase] = useState<Phase>('start')
   const [qIndex, setQIndex] = useState(0)
   const [results, setResults] = useState<RunResult[]>([])
-  const [picked, setPicked] = useState<number | null>(null)
+  // Committed selection for the question being revealed:
+  // single = one index, multi = picked set, order = tap sequence, null = timed out.
+  const [picked, setPicked] = useState<number | number[] | null>(null)
+  // In-progress selection for multi/order questions before "Lock in".
+  const [draft, setDraft] = useState<number[]>([])
   const [remainingMs, setRemainingMs] = useState(0)
   const [mediaUrl, setMediaUrl] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState<GameState | null>(null)
@@ -105,10 +109,8 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
   }, [phase, qIndex])
 
   const question = quiz.questions[qIndex]
-  const totalMs = useMemo(() => {
-    const sec = question?.timeLimit ?? quiz.timer.defaultSeconds ?? 20
-    return sec * 1000
-  }, [question, quiz.timer.defaultSeconds])
+  const qType: QuestionType = question ? questionType(question) : 'single'
+  const totalMs = useMemo(() => (question ? questionSeconds(question, quiz) * 1000 : 20_000), [question, quiz])
 
   const questionStartRef = useRef(0)
   const deadlineRef = useRef(0)
@@ -141,7 +143,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
       const rem = deadlineRef.current - performance.now()
       if (rem <= 0) {
         setRemainingMs(0)
-        answer(null)
+        commit(null) // locking in is "answering": an uncommitted selection scores 0
         return true
       }
       setRemainingMs(rem)
@@ -156,24 +158,55 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
 
   function beginQuestion(index: number) {
     setPicked(null)
+    setDraft([])
     setQIndex(index)
     questionStartRef.current = performance.now()
-    const sec = quiz.questions[index].timeLimit ?? quiz.timer.defaultSeconds ?? 20
+    const sec = questionSeconds(quiz.questions[index], quiz)
     deadlineRef.current = performance.now() + sec * 1000
     setRemainingMs(sec * 1000)
     setPhase('question')
   }
 
-  function answer(choice: number | null) {
+  /** All-or-nothing grading against the question's type. `sel` = 0-based answer indices. */
+  function gradeCorrect(sel: number[] | null): boolean {
+    if (!sel || sel.length === 0) return false
+    const q = question
+    if (qType === 'single') {
+      return sel.length === 1 && Boolean(q.answers[sel[0]]?.correct)
+    }
+    if (qType === 'multi') {
+      const correct = q.answers.flatMap((a, i) => (a.correct ? [i] : []))
+      return sel.length === correct.length && correct.every((i) => sel.includes(i))
+    }
+    // order: tap sequence must match correctOrder (1-based) exactly.
+    const expected = q.correctOrder ?? []
+    return sel.length === expected.length && sel.every((idx, pos) => expected[pos] === idx + 1)
+  }
+
+  /** Finalise the question with a committed selection (null = timed out / no answer). */
+  function commit(sel: number[] | null) {
     if (phase !== 'question') return
     const answeredMs = performance.now() - questionStartRef.current
     const rem = mode === 'timed' ? Math.max(0, deadlineRef.current - performance.now()) : 0
-    const correct =
-      choice !== null && Boolean(question.answers[choice]?.correct)
+    const correct = gradeCorrect(sel)
     const points = scoreAnswer({ mode, correct, remainingMs: rem, totalMs })
-    setPicked(choice)
-    setResults((r) => [...r, { correct, points, answeredMs, picked: choice }])
+    const recorded =
+      sel === null || sel.length === 0 ? null : qType === 'single' ? sel[0] : sel
+    setPicked(recorded)
+    setResults((r) => [...r, { correct, points, answeredMs, picked: recorded }])
     setPhase('reveal')
+  }
+
+  /** Single-choice: one tap commits immediately (unchanged behaviour). */
+  function answer(choice: number) {
+    if (phase !== 'question') return
+    commit([choice])
+  }
+
+  /** Multi/order: tap toggles membership (for order, the sequence position). */
+  function tapOption(i: number) {
+    if (phase !== 'question') return
+    setDraft((d) => (d.includes(i) ? d.filter((x) => x !== i) : [...d, i]))
   }
 
   function next() {
@@ -320,6 +353,10 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
 
   const reveal = phase === 'reveal'
   const progress = (qIndex + (reveal ? 1 : 0)) / quiz.questions.length
+  const wasCorrect = results[results.length - 1]?.correct ?? false
+  // The committed selection as an array, for reveal diffing across all types.
+  const revealSel: number[] = Array.isArray(picked) ? picked : typeof picked === 'number' ? [picked] : []
+  const canLock = qType === 'multi' ? draft.length > 0 : draft.length === question.answers.length
 
   return (
     <div>
@@ -336,31 +373,71 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
         )}
         {mediaUrl && <img className="question-img" src={mediaUrl} alt={question.image?.alt ?? ''} />}
         <div className="prompt">{question.prompt}</div>
+        {!reveal && qType !== 'single' && (
+          <div className="muted small type-hint">
+            {qType === 'multi'
+              ? 'Multiple answers — select every correct one, then lock in.'
+              : 'Put the answers in the correct order, then lock in.'}
+          </div>
+        )}
 
         <div className="shape-grid">
           {question.answers.map((a, i) => {
             let cls = `answer-btn shape-${i % 4}`
+            let ordPos = -1
             if (reveal) {
-              if (a.correct) cls += ' reveal-correct'
-              else if (picked === i) cls += ' reveal-wrong'
-              else cls += ' dim'
+              ordPos = revealSel.indexOf(i)
+              if (qType === 'single') {
+                if (a.correct) cls += ' reveal-correct'
+                else if (ordPos >= 0) cls += ' reveal-wrong'
+                else cls += ' dim'
+              } else if (qType === 'multi') {
+                if (a.correct && ordPos >= 0) cls += ' reveal-correct'
+                else if (a.correct) cls += ' reveal-missed'
+                else if (ordPos >= 0) cls += ' reveal-wrong'
+                else cls += ' dim'
+              } else {
+                // order: right answer at the right position wins.
+                const expectedPos = (question.correctOrder ?? []).indexOf(i + 1)
+                if (ordPos >= 0 && expectedPos === ordPos) cls += ' reveal-correct'
+                else if (ordPos >= 0) cls += ' reveal-wrong'
+                else cls += ' dim'
+              }
+            } else if (qType !== 'single' && draft.includes(i)) {
+              cls += ' selected'
+              ordPos = draft.indexOf(i)
             }
             return (
               <button
                 key={a.id}
                 className={cls}
                 disabled={reveal}
-                onClick={() => answer(i)}
-                aria-label={`${SHAPE_NAMES[i % 4]}: ${a.text}`}
+                onClick={qType === 'single' ? () => answer(i) : () => tapOption(i)}
+                aria-label={
+                  qType === 'single'
+                    ? `${SHAPE_NAMES[i % 4]}: ${a.text}`
+                    : `${a.text}${ordPos >= 0 ? ` (position ${ordPos + 1})` : ''}`
+                }
+                aria-pressed={qType !== 'single' ? ordPos >= 0 : undefined}
               >
-                <span className="shape" aria-hidden="true">
-                  {SHAPES[i % 4]}
-                </span>
+                {qType === 'order' && ordPos >= 0 ? (
+                  <span className="ord" aria-hidden="true">{ordPos + 1}</span>
+                ) : (
+                  <span className="shape" aria-hidden="true">{SHAPES[i % 4]}</span>
+                )}
                 <span>{a.text}</span>
               </button>
             )
           })}
         </div>
+
+        {!reveal && qType !== 'single' && (
+          <div className="lock-row">
+            <button className="primary big" disabled={!canLock} onClick={() => commit(draft)}>
+              Lock in
+            </button>
+          </div>
+        )}
 
         {reveal && (
           <>
@@ -368,7 +445,7 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
               <p className="center" style={{ marginTop: 14 }}>
                 ⏰ Time&apos;s up!
               </p>
-            ) : question.answers[picked].correct ? (
+            ) : wasCorrect ? (
               <p className="center" style={{ marginTop: 14 }}>
                 ✔ Correct
                 {mode === 'timed' && (
@@ -379,6 +456,23 @@ function Game({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
               <p className="center" style={{ marginTop: 14 }}>
                 ✘ Not quite
               </p>
+            )}
+            {qType === 'order' && (
+              <div className="order-answer">
+                <div className="seq-line">
+                  <span className="muted">Correct order:</span>{' '}
+                  {(question.correctOrder ?? []).map((n, pos) => (
+                    <span key={n} className="chip">
+                      {pos + 1}. {question.answers[n - 1]?.text}
+                    </span>
+                  ))}
+                </div>
+                {revealSel.length > 0 && (
+                  <div className="seq-line muted small">
+                    Your order: {revealSel.map((idx) => question.answers[idx]?.text).join(' → ')}
+                  </div>
+                )}
+              </div>
             )}
             {question.explanation && <div className="explanation">{question.explanation}</div>}
             <div className="spread">

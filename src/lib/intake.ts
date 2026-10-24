@@ -1,7 +1,7 @@
 import { parseQuizCsv } from './csv'
 import { saveQuiz } from './db'
-import { unpackQuiz } from './quizPackage'
-import type { Quiz } from './schema'
+import { requireSupportedFeatures, unpackQuiz } from './quizPackage'
+import { quizVersionFor, type Question, type Quiz } from './schema'
 
 export interface ImportOutcome {
   quiz: Quiz
@@ -72,8 +72,24 @@ export function parseBareQuizJson(text: string, titleHint?: string): { quiz: Qui
   if (!o || !Array.isArray(o.questions) || typeof o.title !== 'string') {
     throw new Error('The JSON does not look like a quiz (needs "title" and "questions").')
   }
+  requireSupportedFeatures(o as unknown as Quiz)
+  const questions: Question[] = (o as unknown as Quiz).questions.map((q) => ({
+    id: crypto.randomUUID(),
+    prompt: q.prompt ?? '',
+    ...(q.type ? { type: q.type } : {}),
+    ...(q.correctOrder ? { correctOrder: q.correctOrder } : {}),
+    answers: (q.answers ?? []).map((a) => ({
+      id: crypto.randomUUID(),
+      text: a.text ?? '',
+      correct: Boolean(a.correct),
+    })),
+    ...(q.timeLimit ? { timeLimit: q.timeLimit } : {}),
+    ...(q.explanation ? { explanation: q.explanation } : {}),
+    // image refs kept but unresolvable without the zip
+    ...(q.image ? { image: { ref: q.image.ref, alt: q.image.alt, credit: q.image.credit } } : {}),
+  }))
   const quiz: Quiz = {
-    v: 1,
+    v: quizVersionFor(questions),
     id: crypto.randomUUID(), // always assign a fresh id to avoid collisions
     title: o.title || titleHint || 'Imported quiz',
     createdAt: typeof o.createdAt === 'string' ? o.createdAt : new Date().toISOString(),
@@ -82,19 +98,7 @@ export function parseBareQuizJson(text: string, titleHint?: string): { quiz: Qui
       defaultSeconds: (o as unknown as Quiz).timer?.defaultSeconds ?? 20,
     },
     source: 'json',
-    questions: (o as unknown as Quiz).questions.map((q) => ({
-      id: crypto.randomUUID(),
-      prompt: q.prompt ?? '',
-      answers: (q.answers ?? []).map((a) => ({
-        id: crypto.randomUUID(),
-        text: a.text ?? '',
-        correct: Boolean(a.correct),
-      })),
-      ...(q.timeLimit ? { timeLimit: q.timeLimit } : {}),
-      ...(q.explanation ? { explanation: q.explanation } : {}),
-      // image refs kept but unresolvable without the zip
-      ...(q.image ? { image: { ref: q.image.ref, alt: q.image.alt, credit: q.image.credit } } : {}),
-    })),
+    questions,
   }
   return { quiz }
 }
