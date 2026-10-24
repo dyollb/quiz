@@ -95,12 +95,18 @@ export default function ImportPage() {
           Simple format (header required):
         </p>
         <pre className="small" style={{ overflowX: 'auto' }}>
-{`question,answer1,answer2,answer3,answer4,correct,explanation
-Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,Bern is the federal city`}
+{`question,answer1,answer2,answer3,answer4,correct,type,explanation
+Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,,Bern is the federal city
+Pick the primes?,2,3,4,6,"2,3",multi,2 and 3 are prime numbers
+Put in order?,Moon forms,Solar System,Earth forms,Milky Way,"2,3,1,4",order,Solar System first`}
         </pre>
         <p className="small muted">
           Kahoot exports are detected automatically. <code>correct</code> is a 1-based number;
-          use <code>2,4</code> for multiple correct answers.
+          use <code>2,4</code> for multi-select questions (pick every correct answer, all-or-nothing).
+          An optional <code>type</code> column takes <code>single</code> (default), <code>multi</code>{' '}
+          or <code>order</code>; for <code>order</code>, list the answers shuffled and put the whole
+          tap sequence in <code>correct</code> (e.g. <code>3,1,4,2</code>).
+          Order/multi questions get 30&nbsp;seconds unless a <code>time_limit</code> says otherwise.
         </p>
       </div>
     </div>

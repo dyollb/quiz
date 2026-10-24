@@ -2,9 +2,11 @@
 """Validate a quiz CSV for the QuizTime PWA "simple" import format.
 
 Checks the file against the contract in ../SKILL.md: exact header, four
-non-empty answers, a single in-range 1-based correct index, duplicate and
-banned option patterns, explanation coverage (2-3 sentences), correct-answer
-position randomness (no position in more than half of the questions, never 3+
+non-empty answers, `correct` matching the question `type` (single: one 1-based
+index; multi: 2+ indices, at least one wrong; order: the full tap sequence as a
+permutation that differs from the listed order), duplicate and banned option
+patterns, explanation coverage (2-3 sentences), correct-answer position
+randomness for single-choice questions (no position in more than half, never 3+
 in a row), and question independence (repeated stem templates, option sets
 shared between questions, the same correct fact tested repeatedly).
 
@@ -26,7 +28,9 @@ import sys
 from collections import Counter
 
 REQUIRED = ["question", "answer1", "answer2", "answer3", "answer4", "correct", "explanation"]
-OPTIONAL_OK = {"time_limit", "time", "time limit", "seconds", "title", "quiz", "quiz title"}
+OPTIONAL_OK = {"time_limit", "time", "time limit", "seconds", "title", "quiz", "quiz title", "type", "question type"}
+VALID_TYPES = {"", "single", "multi", "order"}
+TYPE_TIME_FLOOR = 20  # the app gives multi/order 30 s by default; below this is suspicious
 
 BANNED_ANSWER = re.compile(
     r"all of the above|none of the above"
@@ -59,6 +63,20 @@ WORD = re.compile(r"[\wÄÖÜäöüßß-]+")
 
 def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def parse_indices(raw: str) -> list[int] | None:
+    """Parse a 1-based index list like '2' or '2,4' ('2;4' tolerated). None if malformed."""
+    parts = [p.strip() for p in re.split(r"[,;]+", (raw or "").strip()) if p.strip()]
+    if not parts:
+        return None
+    nums: list[int] = []
+    for p in parts:
+        if not re.fullmatch(r"\d+", p):
+            return None
+        nums.append(int(p))
+    return nums
+
 
 
 def lowered(text: str) -> str:
@@ -126,10 +144,10 @@ def main() -> int:
         if name and name not in REQUIRED and name not in OPTIONAL_OK:
             w(f"header: unknown column '{name}' (the app will ignore it)")
     if errors:
-        report(args.file, 0, [], errors, warnings, args.strict)
+        report(args.file, 0, Counter(), [], errors, warnings, args.strict)
         return 1
 
-    questions: list[tuple[int, str, list[str], int, str]] = []  # (line, prompt, answers, key, expl)
+    questions: list[tuple[int, str, list[str], list[int], str, str]] = []  # (line, prompt, answers, keys, expl, type)
 
     for line_no, row in enumerate(rows[1:], start=2):
         cells = {name: norm(row[idx[name]]) if idx[name] < len(row) else "" for name in idx}
@@ -140,14 +158,22 @@ def main() -> int:
         explanation = cells.get("explanation", "")
         time_raw = next((cells[n] for n in ("time_limit", "time", "time limit", "seconds") if cells.get(n)), "")
         title_raw = next((cells[n] for n in ("title", "quiz", "quiz title") if cells.get(n)), "")
+        type_raw = next((lowered(cells.get(n, "")) for n in ("type", "question type") if cells.get(n)), "")
 
         if not prompt:
             if any(answers) or correct_raw or explanation or time_raw or title_raw:
                 w(f"row {line_no}: empty question but other cells present - row skipped by the app")
             continue
 
+        if type_raw not in VALID_TYPES:
+            e(f"row {line_no}: type='{type_raw}' - use single, multi or order (or leave it empty)")
+
         empty = [i + 1 for i, a in enumerate(answers) if not a]
-        if empty:
+        if type_raw == "order":
+            # order may use 3 or 4 answers, but only answer4 may be empty
+            if empty and set(empty) != {4}:
+                e(f"row {line_no}: answer{', answer'.join(map(str, empty))} is empty - order questions fill answer1..answer3 (answer4 optional)")
+        elif empty:
             e(f"row {line_no}: answer{', answer'.join(map(str, empty))} is empty - fill all four options")
 
         filled = [a for a in answers if a]
@@ -169,21 +195,54 @@ def main() -> int:
         if len(prompt) > 120:
             w(f"row {line_no}: question is {len(prompt)} chars - aim under 120 so it fits on a phone")
 
-        if not re.fullmatch(r"[1-4]", correct_raw):
-            e(f"row {line_no}: correct='{correct_raw}' - must be exactly one digit 1-4")
-            questions.append((line_no, prompt, filled, 0, explanation))
-            continue
-        key = int(correct_raw)
-        if key > len(filled):
-            e(f"row {line_no}: correct={key} points to an empty answer slot")
-        questions.append((line_no, prompt, filled, key, explanation))
+        keys: list[int] = []
+        qtype = type_raw if type_raw in VALID_TYPES else ""
+        nums = parse_indices(correct_raw)
+        if nums is None:
+            e(f"row {line_no}: correct='{correct_raw}' - 1-based index or index list like 2 or 2,4")
+        else:
+            oob = [v for v in nums if not 1 <= v <= len(filled)]
+            dup = len(set(nums)) != len(nums)
+            if oob:
+                e(f"row {line_no}: correct={correct_raw} out of range (1-{len(filled)}) - points to an empty or missing answer slot")
+            elif dup:
+                e(f"row {line_no}: correct='{correct_raw}' repeats an index")
+            elif qtype == "multi":
+                if len(nums) < 2:
+                    e(f"row {line_no}: type=multi needs at least two correct indices")
+                elif len(nums) >= len(filled):
+                    e(f"row {line_no}: type=multi needs at least one wrong answer")
+                else:
+                    keys = nums
+            elif qtype == "order":
+                if len(filled) < 3:
+                    e(f"row {line_no}: order questions need at least three answers")
+                elif sorted(nums) != list(range(1, len(filled) + 1)):
+                    e(f"row {line_no}: order correct='{correct_raw}' must list every answer exactly once (a full sequence of 1-{len(filled)})")
+                elif nums == list(range(1, len(filled) + 1)):
+                    e(f"row {line_no}: order answers are listed in the correct order - shuffle the answer columns so the key does not leak")
+                else:
+                    keys = nums
+            elif len(nums) == 1:
+                keys = nums
+            elif qtype == "single":
+                e(f"row {line_no}: type=single needs exactly one correct index")
+            else:
+                qtype = "multi"  # legacy row: several correct indices play as multi-select
+                w(f"row {line_no}: several correct indices without a type column - write type=multi")
+                keys = nums
+        efftype = qtype or ("multi" if len(keys) > 1 else "single")
+        if efftype == "order" and len(filled) == 3:
+            w(f"row {line_no}: order with 3 answers has only 6 permutations - prefer 4 answers (24 orders to guess through)")
+        questions.append((line_no, prompt, filled, keys, explanation, efftype))
 
         stem_tokens = words_6plus(prompt)
-        if stem_tokens and 2 <= len(filled) and key:
+        if stem_tokens and keys and efftype != "order" and len(keys) < len(filled):
+            keyset = set(keys)
             for tok in sorted(stem_tokens):
-                hits = [i + 1 for i, a in enumerate(filled) if tok in lowered(a)]
-                if hits == [key]:
-                    w(f"row {line_no}: stem word '{tok}' reappears only in the correct answer - this clues the key")
+                hits = {i + 1 for i, a in enumerate(filled) if tok in lowered(a)}
+                if hits == keyset:
+                    w(f"row {line_no}: stem word '{tok}' reappears only in the correct answer{'s' if len(keyset) > 1 else ''} - this clues the key")
 
         if not explanation:
             e(f"row {line_no}: explanation is missing - required for every question")
@@ -203,12 +262,14 @@ def main() -> int:
                 t = int(time_raw)
                 if not 5 <= t <= 120:
                     w(f"row {line_no}: time_limit={t} outside 5-120 seconds")
+                elif efftype != "single" and t < TYPE_TIME_FLOOR:
+                    w(f"row {line_no}: time_limit={t} is short for a {efftype}-type question - the app gives 30 s; omit time_limit to use it")
             except ValueError:
                 w(f"row {line_no}: time_limit='{time_raw}' is not a whole number")
 
     if not questions:
         e("no question rows found below the header")
-        report(args.file, 0, [], errors, warnings, args.strict)
+        report(args.file, 0, Counter(), [], errors, warnings, args.strict)
         return 1
 
     prompts: dict[str, int] = {}
@@ -217,7 +278,8 @@ def main() -> int:
             e(f"row {line_no}: duplicate question (same stem as row {prompts[lowered(prompt)]})")
         prompts.setdefault(lowered(prompt), line_no)
 
-    positions = [key for _, _, _, key, _ in questions if key]
+    type_counts = Counter(t for *_, t in questions)
+    positions = [keys[0] for _, _, _, keys, _, t in questions if t == "single" and keys]
     n = len(positions)
     counts = Counter(positions)
     for pos in sorted(counts):
@@ -236,8 +298,17 @@ def main() -> int:
                 e(f"position {run_val} correct {run_len}x in a row (rows {run_start}-{run_start + run_len - 1}) - re-shuffle")
             run_val, run_len, run_start = pos, 1, i + 1
 
-    for line_no, prompt, filled, key, _ in questions:
-        if key == 0 or len(filled) < 2:
+    # multi-select: the same correct-position set over and over is guessable
+    multi_sets: dict[tuple[int, ...], list[int]] = {}
+    for line_no, _, _, keys, _, t in questions:
+        if t == "multi" and keys:
+            multi_sets.setdefault(tuple(sorted(keys)), []).append(line_no)
+    for key_pos, lines in multi_sets.items():
+        if len(lines) >= 2:
+            w(f"correct positions ({','.join(map(str, key_pos))}) repeat in {len(lines)} multi questions ({', '.join(map(str, lines))}) - vary which options are correct")
+
+    for line_no, prompt, filled, keys, _, t in questions:
+        if t == "order" or not keys or len(filled) < 2:
             continue
         lens = [len(a) for a in filled]
         if min(lens) > 0 and max(lens) / min(lens) >= 3:
@@ -252,14 +323,14 @@ def main() -> int:
             e(f"rows {', '.join(map(str, lines))}: same stem template used {len(lines)}x ('{tpl}') - such items are correlated and give answers away by elimination")
 
     opt_lines: dict[frozenset[str], list[int]] = {}
-    for line_no, _, filled, _, _ in questions:
+    for line_no, _, filled, _, _, _ in questions:
         opt_lines.setdefault(frozenset(lowered(a) for a in filled), []).append(line_no)
     for lines in opt_lines.values():
         if len(lines) >= 2:
             e(f"rows {', '.join(map(str, lines))}: identical option set - answering one solves the other(s)")
 
     pair_shared: dict[tuple[int, int], int] = Counter()
-    for (l1, _, f1, _, _), (l2, _, f2, _, _) in itertools.combinations(questions, 2):
+    for (l1, _, f1, _, _, _), (l2, _, f2, _, _, _) in itertools.combinations(questions, 2):
         shared = sum(1 for a in f2 if lowered(a) in {lowered(x) for x in f1})
         if shared:
             pair_shared[(l1, l2)] = shared
@@ -270,29 +341,32 @@ def main() -> int:
             w(f"rows {l1} & {l2}: share 2 options - check that neither gives the other away")
 
     key_lines: dict[str, list[int]] = {}
-    for line_no, _, filled, key, _ in questions:
-        if key and key <= len(filled):
-            key_lines.setdefault(lowered(filled[key - 1]), []).append(line_no)
+    for line_no, _, filled, keys, _, t in questions:
+        tested = keys if t != "order" else list(range(1, len(filled) + 1))
+        for i in tested:
+            if 1 <= i <= len(filled):
+                key_lines.setdefault(lowered(filled[i - 1]), []).append(line_no)
     for text, lines in key_lines.items():
         if len(lines) >= 3:
             e(f"'{text}' is the correct answer in {len(lines)} questions ({', '.join(map(str, lines))}) - one fact per question")
         elif len(lines) == 2:
             w(f"'{text}' is the correct answer in both rows {lines[0]} and {lines[1]} - make the second item test something else")
 
-    report(args.file, n, [counts.get(p, 0) for p in (1, 2, 3, 4)], errors, warnings, args.strict)
+    report(args.file, len(questions), type_counts, [counts.get(p, 0) for p in (1, 2, 3, 4)], errors, warnings, args.strict)
     if errors or (args.strict and warnings):
         return 1
     return 0
 
 
-def report(path: str, n: int, counts: list[int], errors: list[str], warnings: list[str], strict: bool) -> None:
+def report(path: str, n: int, type_counts: Counter, counts: list[int], errors: list[str], warnings: list[str], strict: bool) -> None:
     for msg in errors:
         print(f"error:   {msg}")
     for msg in warnings:
         print(f"warning: {msg}")
     if n:
         dist = " ".join(f"pos{i}={c}" for i, c in enumerate(counts, start=1))
-        print(f"{n} questions · correct positions: {dist}")
+        tc = " · ".join(f"{type_counts[t]} {t}" for t in ("single", "multi", "order") if type_counts.get(t))
+        print(f"{n} questions ({tc}) · correct positions of single-choice: {dist}")
     verdict = "OK" if not errors and not (strict and warnings) else "FAILED"
     print(f"{verdict}: {len(errors)} error(s), {len(warnings)} warning(s) in {path}")
 

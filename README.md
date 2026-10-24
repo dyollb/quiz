@@ -41,7 +41,7 @@ Capital of Switzerland?,Zurich,Bern,Geneva,Basel,2,Bern is the federal city
 2 + 2?,3,4,5,6,2,2 + 2 equals 4.
 ```
 
-One correct answer per question — the app is single-choice. Kahoot-export CSVs are auto-detected, and `.quiz` packages (zip with `quiz.json` + images) round-trip photos and attribution. Full details: [docs/quiz-format.md](docs/quiz-format.md).
+One correct answer per question by default. An optional `type` column adds two formats that are much harder to guess than plain choice: **`multi`** — select-all-that-apply, `correct` lists every right answer (`"2,4"`, exact set to score) and **`order`** — tap the answers in the right sequence, `correct` gives the whole sequence (`"3,1,4,2"`). Multi/order questions get 30 seconds by default. Kahoot-export CSVs are auto-detected (their multi-correct rows import as `multi`), and `.quiz` packages (zip with `quiz.json` + images) round-trip photos and attribution. Full details: [docs/quiz-format.md](docs/quiz-format.md); worked example with all three types: [`example/Mixed_types_demo_quiz.csv`](example/Mixed_types_demo_quiz.csv).
 
 ### Generate quizzes with ChatGPT / Codex
 
